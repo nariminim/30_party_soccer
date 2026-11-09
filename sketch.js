@@ -8,14 +8,15 @@
 // 3. 연타 대결: 화면의 큰 버튼을 최대한 빨리 탭한다. 팀 게이지를 먼저 채우면 승리
 // 4. 슬라이드 퍼즐: 팀마다 같은 퍼즐 하나. 빈칸 옆 조각을 탭하면 빈칸으로 밀린다. 팀원 누구나 탭할 수 있음. 먼저 맞추면 승리
 // 한 게임이 끝나면 승리 팀을 보여주고 다음 게임으로 넘어감
-// 모두 접속하면 무대의 [게임 시작] 버튼으로 시작
+// 모두 접속하면 무대의 [게임 시작] 버튼으로 1단계부터 시작, 또는 단계 버튼으로 그 게임만 플레이
+// 4단계(퍼즐)까지 끝나면 최종 승리 팀 발표 → [다시 시작] 또는 단계 선택
 // 무대 키보드: N = 다음 게임으로 / R = 처음(대기실)으로
 
 let room = "class"; // ✏️ 방 이름
 let WIN_GOALS = 3; // ✏️ 축구: 몇 골 먼저 넣으면 승리
 let SHAKE_TARGET = 30; // ✏️ 흔들기: 팀원 1명당 평균 몇 번 흔들면 승리
-let TAP_TARGET = 60; // ✏️ 연타: 팀원 1명당 평균 몇 번 탭하면 승리
-let PUZZLE_N = 4; // ✏️ 퍼즐: 가로세로 몇 칸 (4이면 4×4)
+let TAP_TARGET = 120; // ✏️ 연타: 팀원 1명당 평균 몇 번 탭하면 승리 (평균이라 사람이 많아도 빨라지지 않음)
+let PUZZLE_N = 3; // ✏️ 퍼즐: 가로세로 몇 칸 (3이면 3×3)
 let SCRAMBLE = 20; // ✏️ 퍼즐: 몇 번 섞을지 (많을수록 어려움)
 let PUZZLE_IMG = "asset/img.png"; // ✏️ 퍼즐 완성 그림 (정사각형 이미지)
 let SHAKE_HIGH = 25; // ✏️ 흔들기 감지: 이보다 세게 움직이면 1번으로 셈
@@ -38,7 +39,9 @@ let pulse = 0; // 1번 셀 때마다 번쩍이는 효과
 let myRound = -1; // 내가 알고 있는 게임 번호
 
 // 무대용
-let startBtn; // 게임 시작 버튼
+let startBtn; // 게임 시작 / 다시 시작 버튼 (1단계부터)
+let levelBtns = []; // 단계 선택 버튼 4개
+let singleMode = false; // true면 고른 게임 하나만 하고 끝
 let phaseStart = 0; // 지금 단계가 시작된 시간
 let bx = 0.5; // 공 위치와 속도 (경기장 크기에 대한 0~1 비율)
 let by = 0.5;
@@ -66,7 +69,7 @@ async function setup() {
   await partyConnect("wss://demoserver.p5party.org", "interactive2_teamgame", room);
   game = await partyLoadShared("game", {
     mode: "soccer", // 지금 게임: "soccer"(축구) / "shake"(흔들기) / "tap"(연타) / "puzzle"(퍼즐)
-    phase: "lobby", // 단계: "lobby"(대기실) → "ready"(카운트다운) → "play"(경기) → "win"(승리 발표)
+    phase: "lobby", // 단계: "lobby"(대기실) → "ready"(카운트다운) → "play"(경기) → "win"(승리 발표) → ... → "final"(최종 발표)
     round: 0, // 게임 번호 (새 게임마다 +1)
     scoreA: 0, // 축구 점수
     scoreB: 0,
@@ -77,6 +80,8 @@ async function setup() {
     winsA: 0, // 이긴 게임 수
     winsB: 0,
     winner: "",
+    finalWinner: "", // 최종 승리 팀 ("" = 무승부)
+    finalText: "", // 최종 결과 문구
     msg: "", // 화면 가운데 큰 글자
   });
   me = await partyLoadMyShared({ stage: isStage, team: "", name: "", tx: 0, ty: 0, count: 0 });
@@ -84,13 +89,7 @@ async function setup() {
 
   if (isStage === true) {
     partySubscribe("move", onMove); // 핸드폰에서 "이 조각 움직여줘" 메시지가 오면 onMove 실행
-    startBtn = createButton("게임 시작");
-    startBtn.size(260, 70);
-    startBtn.position(width / 2 - 130, height - 230);
-    startBtn.style("font-size", "28px");
-    startBtn.style("border", "none");
-    startBtn.style("border-radius", "16px");
-    startBtn.mouseClicked(startPressed);
+    makeMenu();
     goLobby();
   } else {
     makeButtons();
@@ -359,6 +358,29 @@ function drawController() {
     return;
   }
 
+  // 최종 발표
+  if (game.phase === "final") {
+    btnReset.hide();
+    fill(0);
+    noStroke();
+    textSize(26);
+    text(me.name + " · " + me.team + "팀", width / 2, 40);
+    textSize(40);
+    if (game.finalWinner === me.team) {
+      text("우리 팀 승리!", width / 2, height * 0.35);
+    } else if (game.finalWinner === "") {
+      text("무승부!", width / 2, height * 0.35);
+    } else {
+      text("다음엔 이기자!", width / 2, height * 0.35);
+    }
+    textSize(20);
+    text(game.finalText, width / 2, height * 0.35 + 60);
+    text("이긴 게임  A " + game.winsA + " : " + game.winsB + " B", width / 2, height * 0.35 + 95);
+    textSize(14);
+    text("무대에서 다음 게임을 고르는 중", width / 2, height - 60);
+    return;
+  }
+
   if (game.mode === "soccer") {
     btnReset.show();
     drawSoccerController(c);
@@ -564,20 +586,109 @@ function drawTeamGauges() {
 // ===============================================================
 // 무대 (프로젝터): 게임 진행을 맡음
 // ===============================================================
-// 대기실로: 시작 버튼 보이기
+// ---------- 메뉴: 시작 버튼 + 단계 선택 버튼 ----------
+function makeMenu() {
+  startBtn = createButton("게임 시작");
+  startBtn.size(320, 70);
+  startBtn.position(width / 2 - 160, height / 2 + 20);
+  startBtn.style("font-size", "26px");
+  startBtn.style("border", "none");
+  startBtn.style("border-radius", "16px");
+  startBtn.mouseClicked(startPressed);
+
+  let names = ["1 기울기 축구", "2 흔들기", "3 연타", "4 슬라이드 퍼즐"];
+  let funcs = [playSoccer, playShake, playTap, playPuzzle];
+  let w = 170;
+  let gap = 16;
+  let left = width / 2 - (w * 4 + gap * 3) / 2;
+  for (let i = 0; i < 4; i++) {
+    let b = createButton(names[i]);
+    b.size(w, 50);
+    b.position(left + i * (w + gap), height / 2 + 110);
+    b.style("font-size", "18px");
+    b.style("border", "none");
+    b.style("border-radius", "12px");
+    b.mouseClicked(funcs[i]);
+    levelBtns.push(b);
+  }
+}
+
+function showMenu(label) {
+  startBtn.html(label);
+  startBtn.show();
+  for (let b of levelBtns) {
+    b.show();
+  }
+}
+
+function hideMenu() {
+  startBtn.hide();
+  for (let b of levelBtns) {
+    b.hide();
+  }
+}
+
+// 대기실로
 function goLobby() {
   game.phase = "lobby";
   game.mode = "soccer";
   game.msg = "";
-  startBtn.show();
+  showMenu("게임 시작 (1단계부터)");
 }
 
-// [게임 시작] 버튼
+// [게임 시작] / [다시 시작]: 1단계부터 4단계까지
 function startPressed() {
-  startBtn.hide();
+  hideMenu();
+  singleMode = false;
   game.winsA = 0;
   game.winsB = 0;
   startGame("soccer");
+}
+
+// 단계 선택: 그 게임 하나만
+function playLevel(mode) {
+  hideMenu();
+  singleMode = true;
+  startGame(mode);
+}
+function playSoccer() {
+  playLevel("soccer");
+}
+function playShake() {
+  playLevel("shake");
+}
+function playTap() {
+  playLevel("tap");
+}
+function playPuzzle() {
+  playLevel("puzzle");
+}
+
+function modeName(mode) {
+  if (mode === "soccer") return "기울기 축구";
+  if (mode === "shake") return "흔들기 대결";
+  if (mode === "tap") return "연타 대결";
+  return "슬라이드 퍼즐";
+}
+
+// 최종 발표: 4단계까지 다 했으면 이긴 게임 수로, 한 게임만 했으면 그 게임 결과로
+function goFinal() {
+  if (singleMode === true) {
+    game.finalWinner = game.winner;
+    game.finalText = modeName(game.mode) + " 승리: " + game.winner + "팀";
+  } else if (game.winsA > game.winsB) {
+    game.finalWinner = "A";
+    game.finalText = "최종 승리: A팀!";
+  } else if (game.winsB > game.winsA) {
+    game.finalWinner = "B";
+    game.finalText = "최종 승리: B팀!";
+  } else {
+    game.finalWinner = "";
+    game.finalText = "무승부!";
+  }
+  game.msg = "";
+  game.phase = "final";
+  showMenu("다시 시작 (1단계부터)");
 }
 
 function startGame(mode) {
@@ -632,7 +743,11 @@ function updateFlow() {
     }
   }
   if (game.phase === "win" && t > 5000) {
-    startGame(nextMode(game.mode));
+    if (singleMode === true || game.mode === "puzzle") {
+      goFinal(); // 마지막 단계(퍼즐)가 끝났거나, 한 게임만 하는 중이면 최종 발표
+    } else {
+      startGame(nextMode(game.mode));
+    }
   }
 }
 
@@ -640,6 +755,10 @@ function drawStage() {
   background(25);
   if (game.phase === "lobby") {
     drawLobby();
+    return;
+  }
+  if (game.phase === "final") {
+    drawFinal();
     return;
   }
   updateFlow();
@@ -682,9 +801,28 @@ function drawLobby() {
   text("핸드폰으로 접속해서 이름을 쓰고 팀을 고르세요", width / 2, 125);
   textSize(36);
   fill(teamColor("A"));
-  text("A팀 " + teamPlayers("A").length + "명", width / 4, height / 2 - 60);
+  text("A팀 " + teamPlayers("A").length + "명", width / 4, height / 2 - 80);
   fill(teamColor("B"));
-  text("B팀 " + teamPlayers("B").length + "명", (width * 3) / 4, height / 2 - 60);
+  text("B팀 " + teamPlayers("B").length + "명", (width * 3) / 4, height / 2 - 80);
+  drawPlayers("A", 0, height - 110);
+  drawPlayers("B", width / 2, height - 110);
+}
+
+// ---------- 최종 발표 ----------
+function drawFinal() {
+  noStroke();
+  textSize(80);
+  if (game.finalWinner === "") {
+    fill(255);
+  } else {
+    fill(teamColor(game.finalWinner));
+  }
+  text(game.finalText, width / 2, 130);
+  fill(255);
+  textSize(28);
+  text("이긴 게임   A " + game.winsA + " : " + game.winsB + " B", width / 2, 220);
+  textSize(18);
+  text("다시 시작하거나, 하고 싶은 단계를 고르세요", width / 2, height / 2 - 20);
   drawPlayers("A", 0, height - 110);
   drawPlayers("B", width / 2, height - 110);
 }
@@ -1000,7 +1138,7 @@ function drawPlayers(team, left, y) {
 
 // 무대 키보드: N = 다음 게임 / R = 처음(대기실)으로
 function keyPressed() {
-  if (isStage === false || game.phase === "lobby") return;
+  if (isStage === false || game.phase === "lobby" || game.phase === "final") return;
   if (key === "n" || key === "N") {
     startGame(nextMode(game.mode));
   }
